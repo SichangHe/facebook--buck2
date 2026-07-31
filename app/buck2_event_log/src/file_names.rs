@@ -46,7 +46,12 @@ pub(crate) fn get_logfile_name(
 
 pub(crate) async fn remove_old_logs(logdir: &AbsNormPath, retained_event_logs: usize) {
     if let Ok(logfiles) = get_files_in_log_dir(logdir) {
-        futures::stream::iter(logfiles.into_iter().rev().skip(retained_event_logs - 1))
+        let skipped_logs = if retained_event_logs == 0 {
+            0
+        } else {
+            retained_event_logs - 1
+        };
+        futures::stream::iter(logfiles.into_iter().rev().skip(skipped_logs))
             .then(|file| async move {
                 // The oldest logs might be open from another concurrent build, so suppress error.
                 tokio::fs::remove_file(file).await.ok()
@@ -202,6 +207,24 @@ mod tests {
                 inside_file.display()
             );
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_remove_old_logs_with_zero_retention() -> buck2_error::Result<()> {
+        let logdir = tempfile::tempdir()?;
+        let logdir_path = AbsPath::new(logdir.path())?;
+        let logdir_norm = AbsNormPath::new(logdir_path)?;
+
+        for i in 0..2 {
+            let log_path = logdir_path.join(format!("buck-log-{i}.zst"));
+            File::create(log_path)?;
+        }
+
+        remove_old_logs(logdir_norm, 0).await;
+
+        assert!(get_files_in_log_dir(logdir_norm)?.is_empty());
 
         Ok(())
     }
